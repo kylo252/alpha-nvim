@@ -13,6 +13,7 @@ local cursor_ix = 1
 local cursor_jumps = {}
 local cursor_jumps_press = {}
 local cursor_jumps_press_queue = {}
+local anchors = {}
 
 local function noop() end
 
@@ -60,6 +61,35 @@ end
 
 local function spaces(n)
     return str_rep(" ", n)
+end
+
+local alpha_ns = vim.api.nvim_create_namespace("alpha")
+
+local function add_anchor(state)
+    local row = state.line
+    if row < 0 then
+        return
+    end
+    local register = function()
+        local bufnr = state.buffer or vim.api.nvim_get_current_buf()
+        local content = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, true)[1]
+        if not content then
+            return
+        end
+        local icon = state.icon or content:match("%S+")
+        local anchor_point = "◍"
+        local offset = 2
+        local col = vim.fn.stridx(content, icon) - offset
+        -- dump(row, col, content, icon)
+        vim.api.nvim_buf_set_extmark(
+            bufnr,
+            alpha_ns,
+            row,
+            col,
+            { virt_text = { { anchor_point, "Normal" } }, virt_text_pos = "overlay", virt_text_win_col = col }
+        )
+    end
+    table.insert(anchors, { register = register })
 end
 
 function alpha.align_center(tbl, state)
@@ -119,7 +149,7 @@ function alpha.highlight(state, end_ln, hl, left)
         for _, hl_section in pairs(hl) do
             table.insert(hl_tbl, {
                 state.buffer,
-                -1,
+                alpha_ns,
                 hl_section[1],
                 state.line,
                 left + hl_section[2],
@@ -266,6 +296,7 @@ function layout_element.button(el, opts, state)
     local col = ((el.opts and el.opts.cursor) or 0) + count_spaces
     cursor_jumps[#cursor_jumps + 1] = { row, col }
     cursor_jumps_press[#cursor_jumps_press + 1] = el.on_press
+    add_anchor(state)
     if el.opts and el.opts.hl_shortcut then
         if type(el.opts.hl_shortcut) == "string" then
             hl = { { el.opts.hl_shortcut, 0, strdisplaywidth(el.opts.shortcut) + 1 } }
@@ -287,6 +318,7 @@ function layout_element.button(el, opts, state)
         list_extend(hl, alpha.highlight(state, state.line, el.opts.hl, left))
     end
     state.line = state.line + 1
+    -- dump(state)
     return val, hl
 end
 
@@ -519,6 +551,7 @@ function alpha.start(on_vimenter, opts)
         buffer = buffer,
         window = window,
         win_width = 0,
+        anchor = {},
     }
     local function draw()
         for k in pairs(cursor_jumps) do
@@ -552,6 +585,12 @@ function alpha.start(on_vimenter, opts)
             { noremap = false, silent = true }
         )
         vim.api.nvim_win_set_cursor(state.window, cursor_jumps[ix])
+        -- dump(anchors)
+        vim.tbl_map(function(anchor)
+            anchor.register()
+        end, anchors)
+
+    dump(vim.api.nvim_buf_get_extmarks(state.buffer, alpha_ns, 0, -1, {details = true}))
     end
     alpha.redraw = draw
     alpha.close = function()
